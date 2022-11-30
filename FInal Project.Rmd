@@ -1,0 +1,696 @@
+---
+title: "Final Project"
+author: "Wayne Luo"
+output:   
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+```
+
+```{r}
+library(tidymodels)
+library(MASS)
+library(dplyr)
+library(ISLR)
+library(ISLR2)
+library(tidyverse)
+library(janitor)
+library(corrplot)
+library(ggthemes)
+library(ggplot2)
+library(glmnet)
+library(rpart.plot)
+library(vip)
+library(randomForest)
+library(xgboost)
+library(ranger)
+tidymodels_prefer()
+```
+
+## Introduction
+
+The purpose of this project is to find the best model to predict the chance of admit for graduate admission.
+
+## The Rationale of Choosing this Topic as My Final Project
+
+As a graduating senior, I have just completed my application season for graduate school. I received a few acceptance letters, but more rejections. Most of the results seemed reasonable to me, but that didn't preclude a few of the safety schools I applied to from rejecting me. In my opinion, graduate school admissions is a very metaphysical thing, so it is my keen interest to explore the logic behind the admissions office's decisions. Which attributes they are more emphrasizing and which attributes can increase the chance of getting admitted.
+
+## Acknowledgements
+
+This dataset is inspired by the UCLA Graduate Dataset. The test scores and GPA are in the older format. The dataset is owned by Mohan S Acharya.
+
+## Inspiration
+
+This dataset was built with the purpose of helping students in shortlisting universities with their profiles. The predicted output gives them a fair idea about their chances for a particular university.
+
+## Loading Data and Packages
+
+The dataset contains several parameters which are considered important during the application for Masters Programs. The parameters included are :
+
+-   `GRE Scores`: Graduate Record Examination Scores ( out of 340 )
+
+-   `TOEFL Scores`: Test of English as a Foreign Language Scores ( out of 120 )
+
+-   `University Rating`: The Rating of Undergraduate School( out of 5 )
+
+-   `SOP`: Statement of Purpose (out of 5)
+
+-   `LOP`: Letter of Recommendation Strength ( out of 5 )
+
+-   `CGPA`: Undergraduate Cumulative GPA Based on Indian Colleges ( out of 10 )
+
+-   `Research`: Whether or not Have Research Experience ( either 0 or 1 )
+
+-   `Chance of Admit`: Chance of getting admission ( ranging from 0 to 1 )
+
+*Note: a full copy of the codebook is availabe in my zipped files.*
+
+### Import Data and Data Understanding
+
+```{r}
+AD <- read_csv(file = "/Users/honchowayne/Desktop/Graduate Admission/Admission_Predict.csv")
+AD %>% head()
+```
+
+```{r}
+str(AD)# check the variable types
+```
+
+The variables such as strength of SOP and LOR, university_rating, and research experience need to be factored, because basically they are categorical variables in numeric form. In this case they can be used in statistical modeling where they will be implemented correctly.
+
+```{r}
+AD$SOP <- as.factor(AD$SOP)
+AD$LOR <- as.factor(AD$LOR)
+AD$`University Rating` <- as.factor(AD$`University Rating`)
+AD$Research <- as.factor(AD$Research)
+```
+
+The dataset is pretty tidy already, so I just did some simple data cleaning so that the space from original dataset turned into "\_" and the variable's name turned into lower case. This is more convenient for me to call on each variables and manipulate data. And Serial Number don't do much help with our goal, so I removed it.
+
+```{r}
+AD <- AD %>% 
+  clean_names()
+AD = AD %>% select(-serial_no)
+AD
+```
+
+## Data Split
+
+I plan to split my data in a proportion of 75% training, 25% testing split, stratifying on the outcome variable `chance_of_admit`.
+
+The data split was conducted prior to the EDA as I did not want to know anything about my testing data set before I tested my model on those observations
+
+```{r}
+set.seed(3435)
+AD_split <- AD %>% initial_split(prop = 0.75, strata = "chance_of_admit")
+AD_train <- training(AD_split)
+AD_test <- testing(AD_split)
+```
+
+let's verify that the training and testing data sets have the appropriate number of observations.
+
+```{r}
+dim(AD_train)
+```
+
+```{r}
+dim(AD_test)
+```
+
+The number is correct: 298+102 = 400
+
+## Exploratory Data Analysis
+
+This entire EDA process will be based on the training set.
+
+My strategy here is to generate plots of each predictors with respect to the `chance of admit`. The purpose here is to find each of their correlation with the `chance of admit`.
+
+```{r}
+GRE <- AD_train %>% 
+  ggplot(aes(x = gre_score, y = chance_of_admit)) + geom_point(alpha = 0.1) + geom_jitter() + stat_summary(fun.y=mean, colour="red", geom="line", size = 1)
+
+TOEFL <- AD_train %>% 
+  ggplot(aes(x = toefl_score, y = chance_of_admit)) + geom_point(alpha = 0.1) + geom_jitter() + stat_summary(fun.y=mean, colour="red", geom="line", size = 1)
+
+UR <- AD_train %>% 
+  ggplot(aes(x = university_rating, y = chance_of_admit)) + geom_point(alpha = 0.1) + geom_jitter() + stat_summary(fun.y=mean, colour="red", geom="line", size = 1)
+
+SOP <- AD_train %>% 
+  ggplot(aes(x = sop, y = chance_of_admit)) + geom_point(alpha = 0.1) + geom_jitter() + stat_summary(fun.y=mean, colour="red", geom="line", size = 1)
+
+LOR <- AD_train %>% 
+  ggplot(aes(x = lor, y = chance_of_admit)) + geom_point(alpha = 0.1) + geom_jitter() + stat_summary(fun.y=mean, colour="red", geom="line", size = 1)
+
+CGPA <- AD_train %>% 
+  ggplot(aes(x = cgpa, y = chance_of_admit)) + geom_point(alpha = 0.1) + geom_jitter() + stat_summary(fun.y=mean, colour="red", geom="line", size = 1)
+
+Research <- AD_train %>% 
+  ggplot(aes(x = research, y = chance_of_admit)) + geom_point(alpha = 0.1) + geom_jitter() + stat_summary(fun.y=mean, colour="red", geom="line", size = 1)
+
+grid.arrange(GRE,TOEFL,UR,SOP,LOR,CGPA,Research)
+```
+
+From the trend of these seven charts, they all have positively associated with chance of admissions. And my intuitive feeling is that GRE, TOEFL and CGPA are the most associated with admission chances respectively, showing highly strong correlation, because their data points are more dense and concentrated.
+
+For the record, based on my application experience that three predictors, GRE, TOEFL and GPA will be especially useful. It also makes sense since universities need to use standardized tests and four years of academic performance as hard indicators to quickly screen out outstanding applicants.
+
+Let's create more plots to further illustrate these seven variables. This part was originally illustrated by boxplot, but boxplot is not actually a good tool to visualize categorical variable. Hence I change them to scatter plots for three numerical variable (GRE, TOEFl, and GPA), differentiating by research experience.
+
+```{r}
+gre <- ggplot(AD_train, aes(gre_score, chance_of_admit)) + geom_point(aes(color=factor(research), alpha=0.5, size=2.0)) + theme_bw()
+gre
+```
+
+```{r}
+toefl <- ggplot(AD_train, aes(toefl_score, chance_of_admit)) + geom_point(aes(color=factor(research), alpha=0.5, size=2.0)) + theme_bw()
+toefl
+```
+
+```{r}
+cgpa <- ggplot(AD_train, aes(cgpa, chance_of_admit)) + geom_point(aes(color=factor(research), alpha=0.5, size=2.0)) + theme_bw()
+cgpa
+```
+
+We can find out that high GRE(\>320), TOEFL(\>110), and CGPA(\>9) combined with the research experience represented by blue dot will greatly increase the chances of getting accepted.
+
+```{r}
+box_UR <- AD_train %>% 
+  ggplot(aes(x = chance_of_admit, y = factor(university_rating), fill = university_rating)) +
+  geom_boxplot() +
+  xlab("Chance of Admission") +
+  ylab("University Rating")
+box_UR
+```
+
+```{r}
+box_sop <- AD_train %>% 
+  ggplot(aes(x = chance_of_admit, y = factor(sop), fill = sop)) +
+  geom_boxplot() +
+  xlab("Chance of Admission") +
+  ylab("Statement of Purpose")
+box_sop
+```
+
+```{r}
+box_lor <- AD_train %>% 
+  ggplot(aes(x = chance_of_admit, y = factor(lor),fill=lor)) +
+  geom_boxplot() +
+  xlab("Chance of Admission") +
+  ylab("Letter of Recommendation")
+box_lor
+```
+
+```{r}
+box_re <- AD_train %>% 
+  ggplot(aes(x = chance_of_admit, y = factor(research),fill=research)) +
+  geom_boxplot() +
+  xlab("Chance of Admission") +
+  ylab("Research Experience")
+box_re
+```
+
+Once again, we could easily detect the patterns embedded in each plots that as the number increases (means more competitive applicant), the chance of admission tends to increase.
+
+Then, let's create a visualization of correlation matrix of the training set and see what we got.
+
+```{r}
+AD_train %>% 
+  select(where(is.numeric)) %>% 
+  cor(use = "complete.obs") %>% 
+  corrplot(type = "lower", diag = FALSE)
+```
+
+This makes it even clearer that, in addition to three numeric variables we analyzed before, the chance of admission are also highly positively related to the remaining 3 variables (university rating, sop and lor) except research experience (this one is bit weak). Therefore, I am going to include these 3 into the model.
+
+Hence, let's focus on exploring if having research experience can bring some edges for applications admission. If it can, I will include it, and vice versa.
+
+```{r}
+a=table(AD_train$research)
+pct=round(a/sum(a)*100)
+lbs=paste(c("No","Yes")," ",pct,"%",sep=" ")
+pie(a,labels=lbs,main="Whether or not had research experience before")
+```
+
+```{r}
+plot(AD_train$research,AD_train$chance_of_admit,col="red",
+    main="Line Plot Between Research and Chance of Admission",
+    xlab="Research",
+    ylab="Chance of Admission")
+```
+
+There are 55% of the student had research experience during their Undergraduate and if we take a look at the second plots, we know that applicants who conducted research before could bring them some edges to get admission, and thus I will include research into my model as a predictor.
+
+In all, this dataset is well-organized，carefully selected，and cleaned. It seems every each variables exist reasonably in the table and all has a positive relationship with the response variable.
+
+### Create Interactions?
+
+```{r}
+P = cor(AD_train[sapply(AD_train, is.numeric)])
+corrplot(P, type = "full", method = "number")
+```
+
+I replaced the `method = number` to better quantify the connection between each variable to determine if I needed to cover the interactions in my recipe. And from above correlation matrix we could detect that all numeric variables have strong positive correlations with each other.
+
+## Building Model
+
+Since my outcome, response variable `chance of admit`, is continuous, I believe my question would be best answered in regression approach.The models I would like to build are Polynomial Regression, Lasso Regression, Ridge Regression, Random Forest, and Boosted Trees. In the end, I will compare each model's performance and pick the best-performing one to fit the testing set.
+
+First thing first, create my recipe:
+
+1\. predict chance of admit by all seven predictors. three variables are numerical and the rest of them are factored.
+
+2\. use `step_dummy` to dummy code any categorical predictors.
+
+3\. use `step_novel` to dealwith the factor variables.
+
+4\. use `step_normalize` to center and scale all predictors.
+
+5\. use `step_zv` to remove variables that contain only a single value.
+
+6\. Since all the numeric predictors are strongly correlated, it might make more sense to do a `step_pca()` than to include interaction terms.
+
+```{r}
+AD_recipe <- recipe(chance_of_admit ~ ., data = AD_train) %>% 
+  step_novel(all_nominal_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_pca(all_numeric_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_predictors())
+AD_recipe
+```
+
+### k-fold Cross-Validation
+
+This can be done using the vfold_cv() function. Common choices for k/v are 5 or 10. Here, I use 10 folds. And I stratify the folds by chance_of_admit.
+
+Stratification is the process of rearranging the data as to ensure each fold is a good representative of the whole. For example in a binary classification problem where each class comprises 50% of the data, it is best to arrange the data such that in every fold, each class comprises around half the instances.
+
+```{r}
+AD_folds <- vfold_cv(AD_train, v = 10, strata = chance_of_admit)
+AD_folds
+```
+
+### Polynomial Regression
+
+Next, fit a polynomial regression model. We can use the linear model specification `lm_spec` to add a preprocessing unit with `recipe()` and `step_poly()`.
+
+suppose we want to find the best value of degree that yields the "closest" fit. This is known as hyperparameter tuning, and it is a case where we can use k-Fold Cross-Validation.
+
+First, I need to use `lm()` to check which variable has significant correlation with our response variable with degree = 2 and then, I will use this variable in the `step_poly()`.
+
+```{r}
+see_performance <- lm(chance_of_admit ~ gre_score^2 + toefl_score^2 + university_rating^2 + sop^2 + lor^2 + cgpa^2 + research^2, data = AD_train)
+summary(see_performance)
+```
+
+Seems like our winner is `cgpa`. Put it into my recipe and right now is the time to get my specified the value of degree.
+
+```{r}
+poly_tuned_rec <- recipe(chance_of_admit ~., data = AD_train) %>%
+  step_poly(cgpa, degree = tune()) %>% 
+  step_novel(all_nominal_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_pca(all_numeric_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_predictors())
+```
+
+Next, we can specify the model engine that we want to fit, and then set up the workflow.
+
+```{r}
+lm_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+poly_tuned_wf <- workflow() %>%
+  add_recipe(poly_tuned_rec) %>%
+  add_model(lm_spec)
+poly_tuned_wf
+```
+
+The next thing we need is a tibble of possible values we want to explore.
+
+```{r}
+degree_grid <- grid_regular(degree(range = c(1, 10)), levels = 10)
+```
+
+Now that all the necessary objects have been created, we can pass them to tune_grid(), which will fit the models within each fold for each value specified in degree_grid.
+
+```{r}
+poly_tune_res <- tune_grid(
+  object = poly_tuned_wf,
+  resamples = AD_folds, 
+  grid = degree_grid,
+  metrics = metric_set(rmse)
+)
+
+poly_tune_res
+```
+
+Create an visual overview of the performance of different hyperparameter pairs
+
+```{r}
+autoplot(poly_tune_res)
+```
+
+Let's see the best-performing tuned degree.
+
+```{r}
+poly_result <- collect_metrics(poly_tune_res) %>% 
+  arrange(mean)
+poly_result[1,]
+```
+
+Okay, the best tuned degree is 1. Use `select_best()` to choose the model that has the optimal `rmse` to fit the linear model to the training set and view the model results
+
+```{r}
+poly_best <- select_best(poly_tune_res, metric = "rmse")
+
+poly_final <- finalize_workflow(poly_tuned_wf, poly_best)
+
+poly_final_fit <- fit(poly_final, data = AD_train)
+
+poly_rmse <- augment(poly_final_fit, new_data = AD_train) %>%
+  rmse(truth = chance_of_admit, estimate = .pred)
+
+poly_rmse
+```
+
+### Ridge Regression
+
+Using `linear_reg()` and setting `mixture = 0` to specify a ridge model. When using the glmnet engine, I also need to tune the parameter `penalty` to find the best value to fit the model.
+
+```{r}
+ridge_spec <- 
+  linear_reg(penalty = tune(), mixture = 0) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet") 
+```
+
+Create my recipe that predicting the outcome variable, `chance_of_admit`, with all other predictor variables. And then create a workflow, adding the model and my recipe in it.
+
+```{r}
+ridge_recipe <- 
+  recipe(formula = chance_of_admit ~ ., data = AD_train) %>% 
+  step_novel(all_nominal_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_pca(all_numeric_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_predictors())
+
+ridge_workflow <- workflow() %>% 
+  add_recipe(ridge_recipe) %>% 
+  add_model(ridge_spec)
+```
+
+Right now I need is the values of penalty I am trying. This can be created using grid_regular(), which creates a grid of evenly spaced parameter values. I follow the lab example to set the range and level.
+
+Although using 50 levels for one parameter might seem overkill. But glmnet fits all the models in one go, so adding more levels to penalty doesn't affect the computational speed much for linear or logistic regression.
+
+```{r}
+ridge_penalty_grid <- grid_regular(penalty(range = c(-50, 50)), levels = 50)
+
+ridge_tune_res <- tune_grid(
+  ridge_workflow,
+  resamples = AD_folds, 
+  grid = ridge_penalty_grid,
+  metrics = metric_set(rmse))
+
+ridge_tune_res
+```
+
+Visualize the tuning result
+
+```{r}
+autoplot(ridge_tune_res)
+```
+
+The "best" values of this can be selected using select_best() and set the `rmse` as performance metrics for evaluation.
+
+```{r}
+ridge_best_penalty <- select_best(ridge_tune_res, metric = "rmse")
+ridge_best_penalty
+```
+
+Using finalize_workflow() to update the recipe by replacing tune() with the value of best_penalty.
+
+```{r}
+ridge_final <- finalize_workflow(ridge_workflow, ridge_best_penalty)
+```
+
+Now, fit this best model again, using the whole training data set. Finally, let's check its performance.
+
+```{r}
+ridge_final_fit <- fit(ridge_final, data = AD_train)
+
+ridge_rmse <- augment(ridge_final_fit, new_data = AD_train) %>%
+  rmse(truth = chance_of_admit, estimate = .pred)
+
+ridge_rmse
+```
+
+### Lasso Regression
+
+This recipe is the same as the ridge_recipe. I just changed its variable name.
+
+Use the glmnet package to perform lasso linear regression. For a linear lasso regression, I need to use linear_reg() and set mixture = 1 to specify a lasso model. And then, combine them into the workflow.
+
+```{r}
+lasso_recipe <- 
+  recipe(formula = chance_of_admit ~ ., data = AD_train) %>% 
+  step_novel(all_nominal_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_pca(all_numeric_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_predictors()) 
+
+lasso_spec <- 
+  linear_reg(penalty = tune(), mixture = 1) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet") 
+
+lasso_workflow <- workflow() %>% 
+  add_recipe(lasso_recipe) %>% 
+  add_model(lasso_spec)
+```
+
+The procedure will be very similar to the ridge regression section. The preprocessing needed is the same. For the penalty range, I will from (-100, 100) to (-10, 10), the best model is the same one.
+
+```{r}
+lasso_penalty_grid <- grid_regular(penalty(range = c(-10, 10)), levels = 20)
+
+lasso_tune_res <- tune_grid(
+  lasso_workflow,
+  resamples = AD_folds, 
+  grid = lasso_penalty_grid,
+  metrics = metric_set(rmse)
+)
+
+lasso_tune_res
+```
+
+```{r}
+autoplot(lasso_tune_res)
+```
+
+```{r}
+lasso_best_penalty <- select_best(lasso_tune_res, metric = "rmse")
+lasso_best_penalty
+```
+
+Then, same as what I did for ridge regression, finalize the workflow and apply the best penalty value to fit the model with training set.
+
+```{r}
+lasso_final <- finalize_workflow(lasso_workflow, lasso_best_penalty)
+
+lasso_final_fit <- fit(lasso_final, data = AD_train)
+```
+
+let's view the performance.
+
+```{r}
+lasso_rmse <- augment(lasso_final_fit, new_data = AD_train) %>%
+  rmse(truth = chance_of_admit, estimate = .pred)
+lasso_rmse
+```
+
+Also, both poly, ridge, and lasso regressions have given us nearly identical results. Hence, it seems that the linear model cannot get past a RMSE of 0.06 .
+
+Let us look at some of the regressions that could yield better results.
+
+### Random Forest
+
+Set mode to "regression" (outcome is a numeric variable), and used the ranger engine. I stored this model and my recipe in a workflow.
+
+```{r}
+rf_spec <- rand_forest() %>%
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+rf_wf <- workflow() %>% 
+  add_model(rf_spec %>% set_args(mtry = tune(), trees = tune(), min_n = tune())) %>% 
+  add_recipe(AD_recipe)
+```
+
+Here comes the step of tunning grid, the three parameters I need to tune is mtry, trees, and min_n. Note that the upper range of mtry cannot go larger than 7 because we only have 7 predictors here. Also, because my dataset is relatively small, so setting level = 10 will not be an issue on computing power.
+
+```{r}
+rf_grid <- grid_regular(mtry(range = c(1,5)), trees(range = c(1,100)), min_n(range = c(1,8)), levels = 10)
+
+rf_tune_res <- tune_grid(
+  rf_wf, 
+  resamples = AD_folds, 
+  grid = rf_grid,
+  metrics = metric_set(rmse)
+  )
+```
+
+Taking a swift glimpse at the visualized result, we can see that `rmse` decrease since the beginning and trend down all the way until it reach around 12 randomly selected predictors, and since there, the overall trend of `rmse` is in a steady state without excessive ups and downs. This makes sense because as the
+
+This makes sense because at first, as the number of randomly selected predictors increases, it means that there is a greater chance of getting the `chance_of_admit` right. However, as the amount of data increases, the results of the predicted admissions odds fluctuate slightly but do not change much. This is probably what we call a program's metaphysical admissions (which can vary from the expected results) and bar (which is relatively consistent in overall admissions standard).
+
+```{r}
+autoplot(rf_tune_res)
+```
+
+Using `collect_metrics` to view the best model with tunning parameters
+
+```{r}
+rf_result <- collect_metrics(rf_tune_res) %>% 
+  arrange(mean)
+rf_result[1,]
+```
+
+Get the best model, finalize its workflow, and the fit the model like normal.
+
+```{r}
+best_rf <- select_best(rf_tune_res, metric = "rmse")
+rf_wf_final <- finalize_workflow(rf_wf, best_rf)
+rf_fit_final <- fit(rf_wf_final, data = AD_train)
+```
+
+Let's view the performance
+
+```{r}
+rf_rmse <- augment(rf_fit_final, new_data = AD_train) %>%
+  rmse(truth = chance_of_admit, estimate = .pred)
+rf_rmse
+```
+
+Using `vip()` to look at the variable importance plot:
+
+From the plot below we can see that cgpa is the most important indicator in predicting chance of admissions, followed by GRE and TOEFL scores, and research is the least important. This tends to be consistent with the results of my previous EDA analysis.
+
+To use a common explanation based on the actual phenomenon, universities are now offering more and more job-oriented taught master's degrees at the graduate level, which are not involved in research. Therefore, when it comes to admissions, admissions offices do not consider research experience as an important indicator, but rather they focus more on the academic performance of the applicant.
+
+```{r}
+rf_spec_final <- finalize_model(rf_spec, best_rf)
+rf_fit <- fit(rf_spec_final, chance_of_admit ~ gre_score + toefl_score + university_rating + sop + lor + cgpa + research , data = AD_train)
+vip(rf_fit)
+```
+
+### Boosted Tree
+
+Finally, set up a boosted tree model and workflow. Use the `xgboost` engine. Tune `trees`, `tree_depth`, and `mtry`. Create a regular grid with 10 levels
+
+```{r}
+boost_spec <- boost_tree() %>%
+  set_engine("xgboost") %>%
+  set_mode("regression")
+
+boost_wf <- workflow() %>% 
+  add_model(boost_spec %>% set_args(trees = tune(), tree_depth = tune(), mtry = tune())) %>% 
+  add_recipe(AD_recipe)
+
+
+boost_grid <- grid_regular(trees(range = c(10, 2000)), 
+                           tree_depth(range = c(1,4)), 
+                           mtry(range = c(1,7)), levels = 10)
+
+boost_tune_res <- tune_grid(
+  boost_wf, 
+  resamples = AD_folds, 
+  grid = boost_grid,
+  metrics = metric_set(rmse)
+)
+```
+
+Create a visualization. From the plot, we can detect that the best model should be at the very beginning with `mtry = 3` and `tree depth = 2`
+
+```{r}
+autoplot(boost_tune_res)
+```
+
+```{r}
+boost_result <- collect_metrics(boost_tune_res) %>% 
+  arrange(mean)
+boost_result[1,]
+```
+
+Finalize the workflow, fit the model with training set and view the performance.
+
+```{r}
+best_boost <- select_best(boost_tune_res, metric = "rmse")
+best_boost
+
+boost_wf_final<- finalize_workflow(boost_wf, best_boost)
+
+boost_fit_final <- fit(boost_wf_final, data = AD_train)
+
+boost_rmse <- augment(boost_fit_final, new_data = AD_train) %>%
+  rmse(truth = chance_of_admit, estimate = .pred)
+boost_rmse
+```
+
+I combined the performance of five models in regard to `rmse` to determine which one performs best.
+
+```{r}
+all_models_rmse <- bind_rows(poly_rmse, ridge_rmse, lasso_rmse, rf_rmse, boost_rmse)
+all_models_rmse %>% add_column(Model_name = c("Polynomial", "Ridge","Lasso","Random Forest","Boosted tree")) %>% select(.estimate, Model_name) 
+```
+
+Seems like our winner with best-performance is Random Forest, so let's continue with this one to fit the testing data in.
+
+## Analysis of The Testing Set
+
+Let's fit the model to the testing dataset and create a few stored data sets for some analysis.
+
+```{r}
+model_test_predictions <- augment(rf_fit_final, new_data = AD_test) %>%
+  rmse(truth = chance_of_admit, estimate = .pred)
+model_test_predictions
+```
+
+Our model returned an `rmse` on our testing dataset is slightly and acceptably bigger than the rmse on our training dataset. This means my model has a some overfitting issue to the training data.
+
+To check where some problem might lie, we can likewise plot the true values against the predicted values:
+
+```{r}
+augment(rf_fit_final, new_data = AD_test) %>%
+  ggplot(aes(chance_of_admit, .pred)) +
+  geom_abline(color = "red") +
+  geom_point(alpha = 0.5) + 
+  labs(title = "Test Dataset Predictions vs. Actual",
+       y = "Predicted Chance of Admission",
+       x = "Chance of Admission")
+```
+
+Ohhh okay, seems like my machine had high variances and low bias.
+
+## Conclusion
+
+After testing various models, I ultimately decided to go with a random forest model when comparing the metrics.
+
+Given the result of prediction on testing dataset, my model had a issue with overfitting, which is saying that model becomes too specialized on solving for the training data and starts to perform worse when validated on the test data. In other word, the model memorizes the answers in the training data set and does not generalize to the test data set. This model working well under the Train dataset, the seen data. We can see some predictions are on this red line but for the unseen data the predictions are scattered.
+
+There are a few ways to overcome overfitting. The first one is to use K-fold cross validation, which I have already applied. I originally use 5 folds, but changed it to 10 after my first testing result. The second one is to remove some of the features and complexity of the model, like the research experience. Another one is to do the early stopping, which is to stop just when the gap between training error and validation error is as small as possible before it starts overfitting. And then, we can use the regularization, but it is a board concept of various techniques and algorithms so I am going to elaborate on this one. The last method I could think of is to use the assemble learning, which is to take advantages of power of multiple models and get some kind of average instead and hopefully that gives us a better prediction and hopefully it has less overfitting as we have randomized these models when we created them.
+
+In brief, this final project provided me the chance to apply what I learned into actual case scenario and led to a decent outcome to predict a chance of getting admitted in these past competitive years. (ps: I got into Columbia)
